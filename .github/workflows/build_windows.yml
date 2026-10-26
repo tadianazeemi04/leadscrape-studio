@@ -1,0 +1,63 @@
+name: Build Windows Desktop App & Client Installer
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build Windows EXE & Installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
+          channel: 'stable'
+
+      - name: Enable Windows Desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Install Flutter Dependencies
+        run: flutter pub get
+
+      - name: Run Test Suite
+        run: flutter test
+
+      - name: Compile Windows Release
+        run: flutter build windows --release
+
+      - name: Package Portable ZIP (Extract & Run)
+        shell: pwsh
+        run: |
+          $releasePath = "build\windows\x64\runner\Release"
+          Compress-Archive -Path "$releasePath\*" -DestinationPath "LeadScrapeStudio_Portable.zip"
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build Single-File Setup.exe Installer
+        run: |
+          mkdir dist
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" windows_installer.iss
+
+      - name: Upload Single-File Client Installer (Setup.exe)
+        uses: actions/upload-artifact@v4
+        with:
+          name: LeadScrapeStudio_Setup_Installer
+          path: dist/LeadScrapeStudio_Setup.exe
+          retention-days: 30
+
+      - name: Upload Portable Client ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: LeadScrapeStudio_Portable_ZIP
+          path: LeadScrapeStudio_Portable.zip
+          retention-days: 30

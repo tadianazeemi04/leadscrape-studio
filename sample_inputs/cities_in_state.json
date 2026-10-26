@@ -1,0 +1,21 @@
+{
+  "Texas": [
+    "Houston",
+    "Austin",
+    "Dallas",
+    "San Antonio",
+    "Fort Worth"
+  ],
+  "Florida": [
+    "Miami",
+    "Orlando",
+    "Tampa",
+    "Jacksonville"
+  ],
+  "California": [
+    "Los Angeles",
+    "San Diego",
+    "San Jose",
+    "San Francisco"
+  ]
+}
