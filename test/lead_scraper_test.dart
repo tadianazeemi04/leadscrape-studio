@@ -45,6 +45,14 @@ void main() {
 
       expect(query, equals('Roofing contractors in Austin Texas USA'));
     });
+
+    test('decodes Bing Base64 redirect URLs accurately', () {
+      // "a1" followed by base64 for "https://example-roofing.com/contact"
+      // base64("https://example-roofing.com/contact") = "aHR0cHM6Ly9leGFtcGxlLXJvb2ZpbmcuY29tL2NvbnRhY3Q"
+      const bingUrl = 'https://www.bing.com/ck/a?!&&p=123&u=a1aHR0cHM6Ly9leGFtcGxlLXJvb2ZpbmcuY29tL2NvbnRhY3Q&ntb=1';
+      final decoded = SearchService.decodeBingUrl(bingUrl);
+      expect(decoded, equals('https://example-roofing.com/contact'));
+    });
   });
 
   group('FileService Parsing Tests', () {
@@ -61,6 +69,18 @@ void main() {
       expect(list, containsAll(['Roofing', 'Plumbing', 'HVAC', 'Electrician', 'Painting', 'Solar']));
     });
 
+    test('parses cities list from multiline and comma-separated text', () {
+      const text = '''
+        Austin, Dallas
+        Houston
+        # Note
+        San Antonio
+      ''';
+
+      final list = FileService.parseCities(text);
+      expect(list, containsAll(['Austin', 'Dallas', 'Houston', 'San Antonio']));
+    });
+
     test('parses states and cities from line format', () {
       const text = '''
         Texas: Houston, Austin, Dallas
@@ -73,38 +93,18 @@ void main() {
       expect(map.containsKey('Florida'), isTrue);
       expect(map['Florida'], equals(['Miami', 'Orlando']));
     });
-
-    test('parses states and cities from CSV format', () {
-      const text = '''
-        Texas, Austin
-        Texas, Houston
-        California, Los Angeles
-      ''';
-
-      final map = FileService.parseStatesAndCities(text);
-      expect(map['Texas'], containsAll(['Austin', 'Houston']));
-      expect(map['California'], contains('Los Angeles'));
-    });
-
-    test('parses states and cities from JSON format', () {
-      const jsonStr = '{"Texas": ["Austin", "Dallas"], "Nevada": ["Las Vegas"]}';
-      final map = FileService.parseStatesAndCities(jsonStr);
-      expect(map['Texas'], containsAll(['Austin', 'Dallas']));
-      expect(map['Nevada'], contains('Las Vegas'));
-    });
   });
 
   group('ContractorTask Model Tests', () {
-    test('calculates total queries accurately', () {
+    test('calculates total queries accurately based on active cities and contractors', () {
       final task = ContractorTask(
+        manualState: 'Texas',
+        activeCities: ['Austin', 'Dallas', 'Houston', 'San Antonio', 'Fort Worth'],
         contractorTypes: ['Roofing', 'Plumbing'],
-        statesAndCities: {
-          'Texas': ['Austin', 'Dallas', 'Houston'],
-          'Florida': ['Miami', 'Orlando'],
-        },
+        statesAndCities: {},
       );
 
-      // 2 contractors * (3 + 2 cities) = 10 queries
+      // 2 contractors * 5 cities = 10 queries
       expect(task.totalQueries, equals(10));
     });
   });

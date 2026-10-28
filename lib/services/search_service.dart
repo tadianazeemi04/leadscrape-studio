@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:html/parser.dart' as html_parser;
 
@@ -15,10 +16,10 @@ class SearchResultLink {
 
 class SearchService {
   static const List<String> _userAgents = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15',
   ];
 
   /// Comprehensive blocklist of Google apps, search engines, and internal services
@@ -49,10 +50,10 @@ class SearchService {
     'docs.google.com',
     'photos.google.com',
     'calendar.google.com',
-    'duckduckgo.com',
     'bing.com',
     'msn.com',
     'microsoft.com',
+    'duckduckgo.com',
     'yahoo.com',
     'w3.org',
     'schema.org',
@@ -81,7 +82,7 @@ class SearchService {
     'pinterest.com',
   };
 
-  /// Constructs the standard search query string as specified:
+  /// Constructs the standard primary search query string as specified:
   /// "[contractors_name_list] contractors in [City_name_list] [State_name_change_when_cities_are_covered] USA"
   static String buildQuery({
     required String contractor,
@@ -91,382 +92,189 @@ class SearchService {
     return '$contractor contractors in $city $state USA';
   }
 
-  /// Exhaustively searches the web across multiple paginated result pages
-  /// to harvest ALL available contractor website links (hundreds or thousands),
-  /// while strictly excluding Google apps and internal services.
-  static Future<List<SearchResultLink>> searchWeb({
-    required String query,
-    String engine = 'duckduckgo',
+  /// Decodes Bing's Base64 obfuscated redirect URLs (`...&u=a1<BASE64>...`)
+  static String? decodeBingUrl(String href) {
+    try {
+      final uri = Uri.tryParse(href);
+      final uParam = uri?.queryParameters['u'];
+      if (uParam != null && uParam.startsWith('a1')) {
+        var base64Part = uParam.substring(2);
+        while (base64Part.length % 4 != 0) {
+          base64Part += '=';
+        }
+        return utf8.decode(base64.decode(base64Part));
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Exhaustive Multi-Page Deep Search Engine:
+  /// Paginates through all result pages (page 1, 2, 3... 20+) across query variations
+  /// until at least [minLinksTarget] (default 300+) unique contractor websites are harvested.
+  /// Filters out all Google apps and search engine internal links.
+  static Future<List<SearchResultLink>> searchWebExhaustive({
+    required String contractor,
+    required String city,
+    required String state,
+    int minLinksTarget = 300,
     bool filterDirectories = true,
-    int maxResults = 0, // 0 means Unlimited / All available
-    void Function(int linksFound, int pagesScanned)? onProgress,
+    void Function(int linksFound, int pagesScanned, String activeQuery)? onProgress,
   }) async {
     final List<SearchResultLink> results = [];
     final Set<String> seenDomains = {};
-    int pagesScanned = 0;
+    int totalPagesScanned = 0;
 
-    final userAgent = _userAgents[DateTime.now().millisecond % _userAgents.length];
+    // Sub-query variations to guarantee 300+ unique results from all pagination depths
+    final queryVariations = [
+      '$contractor contractors in $city $state USA',
+      '$contractor companies in $city $state USA',
+      'best $contractor in $city $state',
+      'local $contractor services $city $state',
+      'licensed $contractor in $city $state USA',
+      '$contractor repair and installation $city $state',
+      '$contractor business $city $state contact email',
+      'commercial and residential $contractor $city $state',
+      'top rated $contractor $city $state USA',
+    ];
 
-    // 1. Primary Engine Multi-Page Harvesting
-    if (engine == 'google') {
-      await _harvestGooglePages(
-        query: query,
-        userAgent: userAgent,
-        results: results,
-        seenDomains: seenDomains,
-        filterDirectories: filterDirectories,
-        maxResults: maxResults,
-        onPageDone: (links, pages) {
-          pagesScanned = pages;
-          onProgress?.call(links, pagesScanned);
-        },
-      );
-    } else if (engine == 'bing') {
-      await _harvestBingPages(
-        query: query,
-        userAgent: userAgent,
-        results: results,
-        seenDomains: seenDomains,
-        filterDirectories: filterDirectories,
-        maxResults: maxResults,
-        onPageDone: (links, pages) {
-          pagesScanned = pages;
-          onProgress?.call(links, pagesScanned);
-        },
-      );
-    } else {
-      // Default / Recommended: DuckDuckGo multi-page pagination
-      await _harvestDuckDuckGoPages(
-        query: query,
-        userAgent: userAgent,
-        results: results,
-        seenDomains: seenDomains,
-        filterDirectories: filterDirectories,
-        maxResults: maxResults,
-        onPageDone: (links, pages) {
-          pagesScanned = pages;
-          onProgress?.call(links, pagesScanned);
-        },
-      );
+    final client = http.Client();
+
+    for (var query in queryVariations) {
+      if (results.length >= minLinksTarget) break;
+
+      final userAgent = _userAgents[DateTime.now().millisecond % _userAgents.length];
+
+      // Paginate through 20 pages per query (first = 1, 21, 41, 61, 81 ... 401)
+      for (int page = 0; page < 20; page++) {
+        if (results.length >= minLinksTarget) break;
+
+        final first = (page * 20) + 1;
+        final url = Uri.parse(
+          'https://www.bing.com/search?q=${Uri.encodeComponent(query)}&first=$first&FORM=PERE$page',
+        );
+
+        try {
+          final res = await client.get(
+            url,
+            headers: {
+              'User-Agent': userAgent,
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.9',
+            },
+          ).timeout(const Duration(seconds: 8));
+
+          if (res.statusCode == 200) {
+            final doc = html_parser.parse(res.body);
+            final anchors = doc.querySelectorAll('li.b_algo h2 a, li.b_algo a[href]');
+            int pageAdded = 0;
+
+            for (var a in anchors) {
+              final rawHref = a.attributes['href'] ?? '';
+              final title = a.text.trim();
+              final decodedUrl = decodeBingUrl(rawHref) ?? rawHref;
+
+              if (decodedUrl.startsWith('http')) {
+                final uri = Uri.tryParse(decodedUrl);
+                if (uri == null) continue;
+
+                final host = uri.host.toLowerCase().replaceAll(RegExp(r'^www\.'), '');
+                if (host.isEmpty) continue;
+
+                // STRICT FILTER: Exclude Google apps and search engine domains
+                if (_isDomainBlocked(host, _searchEngineAndAppDomains)) continue;
+
+                // FILTER: Exclude directory aggregators if enabled
+                if (filterDirectories && _isDomainBlocked(host, _directoryAggregatorDomains)) continue;
+
+                // Deduplicate by domain
+                if (!seenDomains.contains(host)) {
+                  seenDomains.add(host);
+                  results.add(SearchResultLink(
+                    title: title.isEmpty ? host : title,
+                    url: decodedUrl,
+                    domain: host,
+                  ));
+                  pageAdded++;
+                }
+              }
+            }
+
+            totalPagesScanned++;
+            onProgress?.call(results.length, totalPagesScanned, query);
+
+            if (pageAdded == 0 && page > 3) {
+              // Reached end of results for this specific variation
+              break;
+            }
+
+            // Polite jitter between page requests
+            await Future.delayed(const Duration(milliseconds: 150));
+          } else {
+            break;
+          }
+        } catch (_) {
+          break;
+        }
+      }
+
+      // Also supplement with DuckDuckGo for additional organic diversity
+      if (results.length < minLinksTarget) {
+        try {
+          final ddgUrl = Uri.parse('https://html.duckduckgo.com/html/?q=${Uri.encodeComponent(query)}');
+          final ddgRes = await client.get(
+            ddgUrl,
+            headers: {
+              'User-Agent': userAgent,
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.9',
+            },
+          ).timeout(const Duration(seconds: 8));
+
+          if (ddgRes.statusCode == 200) {
+            final doc = html_parser.parse(ddgRes.body);
+            final ddgAnchors = doc.querySelectorAll('a.result__url, a.result__a, div.result__body a');
+
+            for (var a in ddgAnchors) {
+              var href = a.attributes['href'] ?? '';
+              final title = a.text.trim();
+
+              if (href.contains('uddg=')) {
+                final uri = Uri.tryParse(href.startsWith('http') ? href : 'https://duckduckgo.com$href');
+                final target = uri?.queryParameters['uddg'];
+                if (target != null && target.isNotEmpty) {
+                  href = target;
+                }
+              }
+
+              if (href.startsWith('http')) {
+                final uri = Uri.tryParse(href);
+                if (uri == null) continue;
+
+                final host = uri.host.toLowerCase().replaceAll(RegExp(r'^www\.'), '');
+                if (host.isEmpty) continue;
+
+                if (_isDomainBlocked(host, _searchEngineAndAppDomains)) continue;
+                if (filterDirectories && _isDomainBlocked(host, _directoryAggregatorDomains)) continue;
+
+                if (!seenDomains.contains(host)) {
+                  seenDomains.add(host);
+                  results.add(SearchResultLink(
+                    title: title.isEmpty ? host : title,
+                    url: href,
+                    domain: host,
+                  ));
+                }
+              }
+            }
+            totalPagesScanned++;
+            onProgress?.call(results.length, totalPagesScanned, query);
+          }
+        } catch (_) {}
+      }
     }
 
-    // 2. Supplementary Harvesting: If maxResults == 0 (unlimited) or user wants 300+
-    // query secondary engines to maximize volume into hundreds/thousands of unique links
-    if ((maxResults == 0 || results.length < maxResults) && results.length < 500) {
-      if (engine != 'bing') {
-        await _harvestBingPages(
-          query: query,
-          userAgent: userAgent,
-          results: results,
-          seenDomains: seenDomains,
-          filterDirectories: filterDirectories,
-          maxResults: maxResults,
-          onPageDone: (links, pages) {
-            onProgress?.call(links, pagesScanned + pages);
-          },
-        );
-      }
-      if (engine != 'duckduckgo' && (maxResults == 0 || results.length < maxResults)) {
-        await _harvestDuckDuckGoPages(
-          query: query,
-          userAgent: userAgent,
-          results: results,
-          seenDomains: seenDomains,
-          filterDirectories: filterDirectories,
-          maxResults: maxResults,
-          onPageDone: (links, pages) {
-            onProgress?.call(links, pagesScanned + pages);
-          },
-        );
-      }
-    }
-
+    client.close();
     return results;
-  }
-
-  /// Paginate Google search (start = 0, 100, 200, 300, 400...)
-  static Future<void> _harvestGooglePages({
-    required String query,
-    required String userAgent,
-    required List<SearchResultLink> results,
-    required Set<String> seenDomains,
-    required bool filterDirectories,
-    required int maxResults,
-    required void Function(int linksFound, int pagesScanned) onPageDone,
-  }) async {
-    final client = http.Client();
-    int page = 0;
-    const maxGooglePages = 10; // Up to ~500-1000 results
-
-    while (page < maxGooglePages) {
-      if (maxResults > 0 && results.length >= maxResults) break;
-
-      final start = page * 100;
-      final url = Uri.parse(
-          'https://www.google.com/search?q=${Uri.encodeComponent(query)}&num=100&start=$start&hl=en');
-
-      try {
-        final response = await client.get(
-          url,
-          headers: {
-            'User-Agent': userAgent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-          },
-        ).timeout(const Duration(seconds: 12));
-
-        if (response.statusCode == 200) {
-          final doc = html_parser.parse(response.body);
-          final rawLinks = _extractGoogleLinks(doc);
-          final added = _filterAndAdd(
-            rawLinks,
-            results,
-            seenDomains,
-            filterDirectories,
-            maxResults,
-          );
-
-          page++;
-          onPageDone(results.length, page);
-
-          // If this page yielded no new links, Google has reached the end of results
-          if (added == 0) break;
-
-          // Short delay between search engine pages
-          await Future.delayed(const Duration(milliseconds: 600));
-        } else {
-          break;
-        }
-      } catch (_) {
-        break;
-      }
-    }
-    client.close();
-  }
-
-  /// Paginate Bing search (first = 1, 51, 101, 151, 201...)
-  static Future<void> _harvestBingPages({
-    required String query,
-    required String userAgent,
-    required List<SearchResultLink> results,
-    required Set<String> seenDomains,
-    required bool filterDirectories,
-    required int maxResults,
-    required void Function(int linksFound, int pagesScanned) onPageDone,
-  }) async {
-    final client = http.Client();
-    int page = 0;
-    const maxBingPages = 15; // Up to ~750 links
-
-    while (page < maxBingPages) {
-      if (maxResults > 0 && results.length >= maxResults) break;
-
-      final first = (page * 50) + 1;
-      final url = Uri.parse(
-          'https://www.bing.com/search?q=${Uri.encodeComponent(query)}&first=$first&count=50');
-
-      try {
-        final response = await client.get(
-          url,
-          headers: {
-            'User-Agent': userAgent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-          },
-        ).timeout(const Duration(seconds: 10));
-
-        if (response.statusCode == 200) {
-          final doc = html_parser.parse(response.body);
-          final rawLinks = _extractBingLinks(doc);
-          final added = _filterAndAdd(
-            rawLinks,
-            results,
-            seenDomains,
-            filterDirectories,
-            maxResults,
-          );
-
-          page++;
-          onPageDone(results.length, page);
-
-          if (added == 0) break;
-          await Future.delayed(const Duration(milliseconds: 500));
-        } else {
-          break;
-        }
-      } catch (_) {
-        break;
-      }
-    }
-    client.close();
-  }
-
-  /// Paginate DuckDuckGo HTML search
-  static Future<void> _harvestDuckDuckGoPages({
-    required String query,
-    required String userAgent,
-    required List<SearchResultLink> results,
-    required Set<String> seenDomains,
-    required bool filterDirectories,
-    required int maxResults,
-    required void Function(int linksFound, int pagesScanned) onPageDone,
-  }) async {
-    final client = http.Client();
-    int page = 0;
-    const maxDDGPages = 10;
-
-    while (page < maxDDGPages) {
-      if (maxResults > 0 && results.length >= maxResults) break;
-
-      final s = page * 30;
-      final url = Uri.parse(
-          'https://html.duckduckgo.com/html/?q=${Uri.encodeComponent(query)}&s=$s');
-
-      try {
-        final response = await client.get(
-          url,
-          headers: {
-            'User-Agent': userAgent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-          },
-        ).timeout(const Duration(seconds: 10));
-
-        if (response.statusCode == 200) {
-          final doc = html_parser.parse(response.body);
-          final rawLinks = _extractDuckDuckGoLinks(doc);
-          final added = _filterAndAdd(
-            rawLinks,
-            results,
-            seenDomains,
-            filterDirectories,
-            maxResults,
-          );
-
-          page++;
-          onPageDone(results.length, page);
-
-          if (added == 0) break;
-          await Future.delayed(const Duration(milliseconds: 500));
-        } else {
-          break;
-        }
-      } catch (_) {
-        break;
-      }
-    }
-    client.close();
-  }
-
-  static List<Map<String, String>> _extractGoogleLinks(dynamic doc) {
-    final List<Map<String, String>> links = [];
-    final anchors = doc.querySelectorAll('a[href]');
-
-    for (var a in anchors) {
-      var href = a.attributes['href'] ?? '';
-      final title = a.text.trim();
-
-      // Unwrap Google redirect (/url?q=...)
-      if (href.startsWith('/url?') || href.contains('url?q=')) {
-        final uri = Uri.tryParse(href.startsWith('http') ? href : 'https://www.google.com$href');
-        final target = uri?.queryParameters['q'];
-        if (target != null && target.isNotEmpty) {
-          href = target;
-        }
-      }
-
-      if (href.startsWith('http')) {
-        links.add({'title': title, 'url': href});
-      }
-    }
-    return links;
-  }
-
-  static List<Map<String, String>> _extractBingLinks(dynamic doc) {
-    final List<Map<String, String>> links = [];
-    final items = doc.querySelectorAll('li.b_algo h2 a, a[href]');
-
-    for (var a in items) {
-      final href = a.attributes['href'] ?? '';
-      final title = a.text.trim();
-      if (href.startsWith('http')) {
-        links.add({'title': title, 'url': href});
-      }
-    }
-    return links;
-  }
-
-  static List<Map<String, String>> _extractDuckDuckGoLinks(dynamic doc) {
-    final List<Map<String, String>> links = [];
-    final anchors = doc.querySelectorAll('a.result__url, a.result__a, div.result__body a, a[href]');
-
-    for (var a in anchors) {
-      var rawHref = a.attributes['href'] ?? '';
-      final title = a.text.trim();
-
-      if (rawHref.contains('uddg=')) {
-        final uri = Uri.tryParse(rawHref.startsWith('http') ? rawHref : 'https://duckduckgo.com$rawHref');
-        final target = uri?.queryParameters['uddg'];
-        if (target != null && target.isNotEmpty) {
-          rawHref = target;
-        }
-      }
-
-      if (rawHref.startsWith('http')) {
-        links.add({'title': title, 'url': rawHref});
-      }
-    }
-    return links;
-  }
-
-  static int _filterAndAdd(
-    List<Map<String, String>> rawLinks,
-    List<SearchResultLink> targetList,
-    Set<String> seenDomains,
-    bool filterDirectories,
-    int maxResults,
-  ) {
-    int addedCount = 0;
-
-    for (var item in rawLinks) {
-      if (maxResults > 0 && targetList.length >= maxResults) break;
-
-      final url = item['url'] ?? '';
-      final title = item['title'] ?? '';
-
-      final uri = Uri.tryParse(url);
-      if (uri == null || !uri.hasScheme || (uri.scheme != 'http' && uri.scheme != 'https')) {
-        continue;
-      }
-
-      final host = uri.host.toLowerCase().replaceAll(RegExp(r'^www\.'), '');
-      if (host.isEmpty) continue;
-
-      // STRICT GOOGLE APP & SEARCH ENGINE FILTER
-      if (_isDomainBlocked(host, _searchEngineAndAppDomains)) {
-        continue;
-      }
-
-      // Filter Aggregators/Directories if configured
-      if (filterDirectories && _isDomainBlocked(host, _directoryAggregatorDomains)) {
-        continue;
-      }
-
-      // Deduplicate by root domain so we only crawl one URL per contractor
-      if (seenDomains.contains(host)) {
-        continue;
-      }
-
-      seenDomains.add(host);
-      targetList.add(SearchResultLink(
-        title: title.isEmpty ? host : title,
-        url: url,
-        domain: host,
-      ));
-      addedCount++;
-    }
-
-    return addedCount;
   }
 
   static bool _isDomainBlocked(String host, Set<String> blocklist) {

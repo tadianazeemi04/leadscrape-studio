@@ -6,6 +6,18 @@ import 'package:csv/csv.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/email_record.dart';
 
+class MasterBatchFiles {
+  final File txtFile;
+  final File csvFile;
+  final Set<String> recordedEmails;
+
+  MasterBatchFiles({
+    required this.txtFile,
+    required this.csvFile,
+    required this.recordedEmails,
+  });
+}
+
 class FileService {
   /// Gets the default directory for saving output files: Documents/LeadScrape_Outputs/
   static Future<Directory> getDefaultOutputDirectory() async {
@@ -15,6 +27,92 @@ class FileService {
       await outDir.create(recursive: true);
     }
     return outDir;
+  }
+
+  /// Initializes a Single Master Batch File pair (TXT & CSV) for the started session
+  static Future<MasterBatchFiles> initMasterBatchSession({
+    required String state,
+    String? customBaseDir,
+  }) async {
+    final baseDir = customBaseDir != null && customBaseDir.isNotEmpty
+        ? Directory(customBaseDir)
+        : await getDefaultOutputDirectory();
+
+    final cleanState = state.replaceAll(RegExp(r'[^a-zA-Z0-9_\- ]'), '').trim();
+    final stateFolder = Directory(p.join(baseDir.path, cleanState));
+    if (!await stateFolder.exists()) {
+      await stateFolder.create(recursive: true);
+    }
+
+    final now = DateTime.now();
+    final timeStamp = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+
+    // 1. Single Master TXT File (One email per line for email sender tools)
+    final txtFileName = '${cleanState}_Batch_${timeStamp}_Emails.txt';
+    final txtFile = File(p.join(stateFolder.path, txtFileName));
+    if (!await txtFile.exists()) {
+      await txtFile.create(recursive: true);
+    }
+
+    // 2. Single Master CSV File (All visited website emails, contractor, city, links)
+    final csvFileName = '${cleanState}_Batch_${timeStamp}_Visited_Websites.csv';
+    final csvFile = File(p.join(stateFolder.path, csvFileName));
+    if (!await csvFile.exists()) {
+      await csvFile.create(recursive: true);
+      // Write header row
+      final headerRow = [
+        ['Email', 'Contractor Type', 'City', 'State', 'Website URL', 'Facebook URL', 'Source', 'Date Discovered'],
+      ];
+      final csvHeader = const ListToCsvConverter().convert(headerRow);
+      await csvFile.writeAsString('$csvHeader\n');
+    }
+
+    return MasterBatchFiles(
+      txtFile: txtFile,
+      csvFile: csvFile,
+      recordedEmails: {},
+    );
+  }
+
+  /// Appends newly discovered records in real-time to the single master batch files
+  static Future<void> appendToMasterBatch({
+    required MasterBatchFiles masterBatch,
+    required List<EmailRecord> newRecords,
+  }) async {
+    if (newRecords.isEmpty) return;
+
+    final txtBuffer = StringBuffer();
+    final List<List<dynamic>> csvRows = [];
+
+    for (var record in newRecords) {
+      final lowerEmail = record.email.toLowerCase().trim();
+      if (!masterBatch.recordedEmails.contains(lowerEmail)) {
+        masterBatch.recordedEmails.add(lowerEmail);
+        txtBuffer.writeln(lowerEmail);
+
+        csvRows.add([
+          record.email,
+          record.contractorType,
+          record.city,
+          record.state,
+          record.websiteUrl,
+          record.facebookUrl ?? '',
+          record.source,
+          record.discoveredAt.toIso8601String(),
+        ]);
+      }
+    }
+
+    // Append to TXT
+    if (txtBuffer.isNotEmpty) {
+      await masterBatch.txtFile.writeAsString(txtBuffer.toString(), mode: FileMode.append);
+    }
+
+    // Append to CSV
+    if (csvRows.isNotEmpty) {
+      final csvData = const ListToCsvConverter().convert(csvRows);
+      await masterBatch.csvFile.writeAsString('$csvData\n', mode: FileMode.append);
+    }
   }
 
   /// Parses contractors list from a TXT or CSV string
@@ -41,6 +139,32 @@ class FileService {
       }
     }
     return contractors;
+  }
+
+  /// Parses cities list from a TXT (one per line or comma-separated)
+  static List<String> parseCities(String content) {
+    final List<String> cities = [];
+    final lines = const LineSplitter().convert(content);
+
+    for (var line in lines) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty || trimmed.startsWith('#')) continue;
+
+      if (trimmed.contains(',')) {
+        final items = trimmed.split(',');
+        for (var item in items) {
+          final clean = item.trim();
+          if (clean.isNotEmpty && !cities.contains(clean)) {
+            cities.add(clean);
+          }
+        }
+      } else {
+        if (!cities.contains(trimmed)) {
+          cities.add(trimmed);
+        }
+      }
+    }
+    return cities;
   }
 
   /// Parses States and Cities from JSON or CSV / TXT format
@@ -103,123 +227,6 @@ class FileService {
     }
 
     return result;
-  }
-
-  /// Saves extracted emails for a specific Contractor in a specific City:
-  /// baseDir / [State] / [Contractor]_[City]_[State]_emails.txt
-  static Future<File> saveCityContractorResult({
-    required String contractor,
-    required String city,
-    required String state,
-    required List<EmailRecord> records,
-    String? customBaseDir,
-  }) async {
-    final baseDir = customBaseDir != null && customBaseDir.isNotEmpty
-        ? Directory(customBaseDir)
-        : await getDefaultOutputDirectory();
-
-    final cleanState = state.replaceAll(RegExp(r'[^a-zA-Z0-9_\- ]'), '').trim();
-    final cleanCity = city.replaceAll(RegExp(r'[^a-zA-Z0-9_\- ]'), '').trim();
-    final cleanContractor =
-        contractor.replaceAll(RegExp(r'[^a-zA-Z0-9_\- ]'), '').trim();
-
-    final stateFolder = Directory(p.join(baseDir.path, cleanState));
-    if (!await stateFolder.exists()) {
-      await stateFolder.create(recursive: true);
-    }
-
-    // 1. Plain Text Notepad file (One email per line)
-    final txtFileName = '${cleanContractor}_${cleanCity}_${cleanState}_emails.txt';
-    final txtFile = File(p.join(stateFolder.path, txtFileName));
-
-    final uniqueEmails = records.map((r) => r.email).toSet().toList();
-    final txtBuffer = StringBuffer();
-    for (var email in uniqueEmails) {
-      txtBuffer.writeln(email);
-    }
-    await txtFile.writeAsString(txtBuffer.toString());
-
-    // 2. Detailed CSV with website and Facebook links
-    final csvFileName = '${cleanContractor}_${cleanCity}_${cleanState}_emails.csv';
-    final csvFile = File(p.join(stateFolder.path, csvFileName));
-
-    final List<List<dynamic>> csvRows = [
-      ['Email', 'Contractor Type', 'City', 'State', 'Website URL', 'Facebook URL', 'Source', 'Date Discovered'],
-    ];
-
-    for (var record in records) {
-      csvRows.add([
-        record.email,
-        record.contractorType,
-        record.city,
-        record.state,
-        record.websiteUrl,
-        record.facebookUrl ?? '',
-        record.source,
-        record.discoveredAt.toIso8601String(),
-      ]);
-    }
-
-    final csvString = const ListToCsvConverter().convert(csvRows);
-    await csvFile.writeAsString(csvString);
-
-    return txtFile;
-  }
-
-  /// Saves the extracted emails for a specific Contractor searched across all cities in one State.
-  static Future<File> saveBatchResult({
-    required String contractor,
-    required String state,
-    required List<EmailRecord> records,
-    String? customBaseDir,
-  }) async {
-    final baseDir = customBaseDir != null && customBaseDir.isNotEmpty
-        ? Directory(customBaseDir)
-        : await getDefaultOutputDirectory();
-
-    final cleanState = state.replaceAll(RegExp(r'[^a-zA-Z0-9_\- ]'), '').trim();
-    final cleanContractor =
-        contractor.replaceAll(RegExp(r'[^a-zA-Z0-9_\- ]'), '').trim();
-
-    final stateFolder = Directory(p.join(baseDir.path, cleanState));
-    if (!await stateFolder.exists()) {
-      await stateFolder.create(recursive: true);
-    }
-
-    final txtFileName = '${cleanContractor}_${cleanState}_emails.txt';
-    final txtFile = File(p.join(stateFolder.path, txtFileName));
-
-    final uniqueEmails = records.map((r) => r.email).toSet().toList();
-    final txtBuffer = StringBuffer();
-    for (var email in uniqueEmails) {
-      txtBuffer.writeln(email);
-    }
-    await txtFile.writeAsString(txtBuffer.toString());
-
-    final csvFileName = '${cleanContractor}_${cleanState}_emails.csv';
-    final csvFile = File(p.join(stateFolder.path, csvFileName));
-
-    final List<List<dynamic>> csvRows = [
-      ['Email', 'Contractor Type', 'City', 'State', 'Website URL', 'Facebook URL', 'Source', 'Date Discovered'],
-    ];
-
-    for (var record in records) {
-      csvRows.add([
-        record.email,
-        record.contractorType,
-        record.city,
-        record.state,
-        record.websiteUrl,
-        record.facebookUrl ?? '',
-        record.source,
-        record.discoveredAt.toIso8601String(),
-      ]);
-    }
-
-    final csvString = const ListToCsvConverter().convert(csvRows);
-    await csvFile.writeAsString(csvString);
-
-    return txtFile;
   }
 
   /// Opens the output folder in Finder (macOS) or File Explorer (Windows/Linux)

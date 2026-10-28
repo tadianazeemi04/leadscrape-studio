@@ -16,24 +16,24 @@ class ResultsTable extends StatefulWidget {
 
 class _ResultsTableState extends State<ResultsTable> with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  final TextEditingController _searchFilter = TextEditingController();
+  final TextEditingController _cityInputController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
   }
 
   @override
   void dispose() {
     _tabController.dispose();
-    _searchFilter.dispose();
+    _cityInputController.dispose();
     super.dispose();
   }
 
   void _copyAllEmailsToClipboard() {
     final emails = widget.controller.allDiscoveredRecords
-        .map((r) => r.email)
+        .map((r) => r.email.toLowerCase().trim())
         .toSet()
         .toList();
 
@@ -55,11 +55,19 @@ class _ResultsTableState extends State<ResultsTable> with SingleTickerProviderSt
     );
   }
 
+  void _addCity() {
+    final text = _cityInputController.text.trim();
+    if (text.isNotEmpty) {
+      widget.controller.addCity(text);
+      _cityInputController.clear();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
     final records = c.allDiscoveredRecords;
-    final uniqueEmails = records.map((r) => r.email).toSet().toList();
+    final uniqueEmails = records.map((r) => r.email.toLowerCase().trim()).toSet().toList();
 
     return Container(
       decoration: BoxDecoration(
@@ -67,7 +75,7 @@ class _ResultsTableState extends State<ResultsTable> with SingleTickerProviderSt
       ),
       child: Column(
         children: [
-          // Top Controls Bar
+          // Top Controls Bar with Tabs & Master File Actions
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             decoration: BoxDecoration(
@@ -98,24 +106,56 @@ class _ResultsTableState extends State<ResultsTable> with SingleTickerProviderSt
                       Tab(
                         child: Row(
                           children: [
-                            const Icon(Icons.table_chart, size: 16),
+                            const Icon(Icons.location_city, size: 16),
                             const SizedBox(width: 6),
-                            Text('Detailed Grid (${records.length})'),
+                            Text('Cities Queue (${c.activeCities.length})'),
                           ],
                         ),
                       ),
                       Tab(
                         child: Row(
                           children: [
-                            const Icon(Icons.folder_zip, size: 16),
+                            const Icon(Icons.table_chart, size: 16),
                             const SizedBox(width: 6),
-                            Text('Saved Files (${c.savedFiles.length})'),
+                            Text('Visited Websites (${records.length})'),
+                          ],
+                        ),
+                      ),
+                      Tab(
+                        child: Row(
+                          children: [
+                            const Icon(Icons.folder, size: 16),
+                            const SizedBox(width: 6),
+                            Text('Batch Files (${c.savedFiles.length})'),
                           ],
                         ),
                       ),
                     ],
                   ),
                 ),
+
+                // Master Output Buttons
+                if (c.masterTxtPath != null)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8.0),
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
+                      onPressed: () => FileService.openFile(c.masterTxtPath!),
+                      icon: const Icon(Icons.description, size: 14),
+                      label: const Text('Open Batch TXT', style: TextStyle(fontSize: 11)),
+                    ),
+                  ),
+                if (c.masterCsvPath != null)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8.0),
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
+                      onPressed: () => FileService.openFile(c.masterCsvPath!),
+                      icon: const Icon(Icons.table_view, size: 14),
+                      label: const Text('Open Batch CSV', style: TextStyle(fontSize: 11)),
+                    ),
+                  ),
+
                 FilledButton.icon(
                   style: FilledButton.styleFrom(
                     backgroundColor: Colors.green.shade700,
@@ -139,10 +179,13 @@ class _ResultsTableState extends State<ResultsTable> with SingleTickerProviderSt
                 // Tab 1: Notepad View (One email per line, selectable text)
                 _buildNotepadView(uniqueEmails),
 
-                // Tab 2: Detailed Table View
+                // Tab 2: Cities Queue (Editable on the right!)
+                _buildCitiesQueueView(c),
+
+                // Tab 3: Detailed Visited Websites Table View
                 _buildDetailedTableView(records),
 
-                // Tab 3: Saved Files
+                // Tab 4: Saved Files
                 _buildSavedFilesView(c),
               ],
             ),
@@ -178,21 +221,130 @@ class _ResultsTableState extends State<ResultsTable> with SingleTickerProviderSt
 
     return Padding(
       padding: const EdgeInsets.all(16),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.2)),
-        ),
-        padding: const EdgeInsets.all(16),
-        child: SelectableText(
-          plainText,
-          style: const TextStyle(
-            fontFamily: 'Courier',
-            fontSize: 13,
-            height: 1.5,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Total Unique Emails: ${uniqueEmails.length}',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+              const Spacer(),
+              const Text('Select all or use "Copy All Emails"', style: TextStyle(fontSize: 11, color: Colors.grey)),
+            ],
           ),
-        ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.2)),
+              ),
+              padding: const EdgeInsets.all(16),
+              child: SelectableText(
+                plainText,
+                style: const TextStyle(
+                  fontFamily: 'Courier',
+                  fontSize: 13,
+                  height: 1.5,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCitiesQueueView(ScraperController c) {
+    final isRunning = c.status == ScrapeStatus.running;
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.location_on, color: Theme.of(context).colorScheme.primary, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                'Active State: ${c.manualState.isEmpty ? "None" : c.manualState} (${c.activeCities.length} Cities)',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              const Spacer(),
+              Text(
+                'Searches per city: ${c.contractorTypes.length} contractor categories',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _cityInputController,
+                  enabled: !isRunning,
+                  decoration: const InputDecoration(
+                    hintText: 'Add another city to queue (e.g. San Antonio)...',
+                    prefixIcon: Icon(Icons.add_location_alt, size: 18),
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                  ),
+                  onSubmitted: (_) => _addCity(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: isRunning ? null : _addCity,
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Add City'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: c.activeCities.isEmpty
+                ? const Center(child: Text('No cities added yet. Add cities above.'))
+                : ListView.separated(
+                    itemCount: c.activeCities.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final city = c.activeCities[index];
+                      final isCurrent = c.currentCity == city && isRunning;
+
+                      return ListTile(
+                        dense: true,
+                        leading: CircleAvatar(
+                          radius: 12,
+                          backgroundColor: isCurrent ? Colors.green : Theme.of(context).colorScheme.primaryContainer,
+                          child: Text('${index + 1}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                        ),
+                        title: Text(
+                          '$city, ${c.manualState}',
+                          style: TextStyle(
+                            fontWeight: isCurrent ? FontWeight.bold : FontWeight.w500,
+                            color: isCurrent ? Colors.green.shade800 : null,
+                          ),
+                        ),
+                        subtitle: isCurrent
+                            ? Text('Currently crawling: ${c.currentContractor}...', style: const TextStyle(fontSize: 11, color: Colors.green))
+                            : Text('${c.contractorTypes.length} searches will run here', style: const TextStyle(fontSize: 11)),
+                        trailing: isRunning
+                            ? null
+                            : IconButton(
+                                tooltip: 'Remove $city',
+                                icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                                onPressed: () => c.removeCity(city),
+                              ),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }
@@ -268,12 +420,12 @@ class _ResultsTableState extends State<ResultsTable> with SingleTickerProviderSt
             Icon(Icons.folder_open, size: 48, color: Colors.grey.shade400),
             const SizedBox(height: 12),
             const Text(
-              'No batch files saved yet.',
+              'No master batch files created yet.',
               style: TextStyle(color: Colors.grey),
             ),
             const SizedBox(height: 4),
             const Text(
-              'When a contractor list item finishes searching all cities in a state,\nits file will appear here automatically.',
+              'When you start scraping, a single master TXT and CSV will be created here\nand updated in real-time with all discovered emails.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
@@ -288,6 +440,7 @@ class _ResultsTableState extends State<ResultsTable> with SingleTickerProviderSt
       itemBuilder: (context, index) {
         final filePath = c.savedFiles[index];
         final fileName = filePath.split(RegExp(r'[/\\]')).last;
+        final isTxt = fileName.endsWith('.txt');
 
         return Card(
           elevation: 0,
@@ -297,7 +450,10 @@ class _ResultsTableState extends State<ResultsTable> with SingleTickerProviderSt
           ),
           margin: const EdgeInsets.only(bottom: 8),
           child: ListTile(
-            leading: const Icon(Icons.description, color: Colors.orange),
+            leading: Icon(
+              isTxt ? Icons.description : Icons.table_view,
+              color: isTxt ? Colors.orange : Colors.green,
+            ),
             title: Text(fileName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
             subtitle: Text(filePath, style: const TextStyle(fontSize: 11), overflow: TextOverflow.ellipsis),
             trailing: Row(
@@ -305,8 +461,8 @@ class _ResultsTableState extends State<ResultsTable> with SingleTickerProviderSt
               children: [
                 OutlinedButton.icon(
                   onPressed: () => FileService.openFile(filePath),
-                  icon: const Icon(Icons.edit_document, size: 14),
-                  label: const Text('Open in Notepad', style: TextStyle(fontSize: 11)),
+                  icon: const Icon(Icons.launch, size: 14),
+                  label: Text(isTxt ? 'Open in Notepad' : 'Open in Excel', style: const TextStyle(fontSize: 11)),
                 ),
                 const SizedBox(width: 8),
                 IconButton(

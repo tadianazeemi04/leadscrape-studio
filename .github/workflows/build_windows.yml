@@ -2,7 +2,7 @@ name: Build Windows Desktop App & Client Installer
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'feature/**' ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
