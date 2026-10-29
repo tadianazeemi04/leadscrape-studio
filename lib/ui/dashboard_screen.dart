@@ -3,6 +3,7 @@ import '../main.dart';
 import '../models/batch_session.dart';
 import '../services/file_service.dart';
 import '../state/scraper_controller.dart';
+import 'widgets/about_dialog.dart';
 import 'widgets/confirmation_dialog.dart';
 import 'widgets/config_panel.dart';
 import 'widgets/progress_header.dart';
@@ -319,6 +320,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     onPressed: _toggleTheme,
                   );
                 },
+              ),
+
+              const SizedBox(width: 4),
+
+              // 5. ABOUT THIS APP & USER GUIDE ("?")
+              IconButton(
+                tooltip: 'About WebReven & How It Works (?)',
+                icon: const Icon(Icons.help_outline_rounded),
+                onPressed: () => showAboutWebRevenDialog(context),
               ),
 
               const SizedBox(width: 12),
