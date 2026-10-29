@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:juniauto/models/batch_session.dart';
 import 'package:juniauto/services/email_extractor.dart';
 import 'package:juniauto/services/file_service.dart';
 import 'package:juniauto/services/search_service.dart';
@@ -131,6 +132,42 @@ void main() {
 
       final set = <EmailRecord>{r1, r2};
       expect(set.length, equals(1));
+    });
+  });
+
+  group('BatchSession Persistence & Resume Tests', () {
+    test('serializes and deserializes BatchSession accurately', () {
+      final now = DateTime.now();
+      final session = BatchSession(
+        id: 'batch_12345',
+        state: 'Texas',
+        cities: ['Houston', 'Dallas', 'Austin'],
+        contractors: ['Roofing', 'HVAC'],
+        completedQueryKeys: ['Roofing|Houston', 'HVAC|Houston'],
+        currentCity: 'Dallas',
+        currentContractor: 'Roofing',
+        masterTxtPath: '/tmp/Texas_Emails.txt',
+        masterCsvPath: '/tmp/Texas_Websites.csv',
+        emailsCount: 42,
+        websitesVisited: 310,
+        createdAt: now,
+        updatedAt: now,
+        isCompleted: false,
+      );
+
+      final json = session.toJson();
+      final restored = BatchSession.fromJson(json);
+
+      expect(restored.id, equals('batch_12345'));
+      expect(restored.state, equals('Texas'));
+      expect(restored.cities.length, equals(3));
+      expect(restored.contractors.length, equals(2));
+      expect(restored.totalQueries, equals(6));
+      expect(restored.completedQueries, equals(2));
+      expect(restored.progressRatio, closeTo(2 / 6, 0.01));
+      expect(restored.emailsCount, equals(42));
+      expect(restored.websitesVisited, equals(310));
+      expect(restored.isCompleted, isFalse);
     });
   });
 }

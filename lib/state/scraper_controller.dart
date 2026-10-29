@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
+import '../models/batch_session.dart';
 import '../models/contractor_task.dart';
 import '../models/email_record.dart';
 import '../models/log_entry.dart';
@@ -33,8 +35,11 @@ class ScraperController extends ChangeNotifier {
   int _completedQueriesCount = 0;
   int _websitesVisitedTotal = 0;
 
-  // Single Master Output Batch Files
+  // Single Master Output Batch Files & Session State
   MasterBatchFiles? _activeMasterBatch;
+  BatchSession? _currentBatchSession;
+  List<BatchSession> _allBatchSessions = [];
+  final Set<String> _completedQueryKeys = {};
   final List<String> _savedFiles = [];
 
   // Storage
@@ -49,8 +54,29 @@ class ScraperController extends ChangeNotifier {
     try {
       final dir = await FileService.getDefaultOutputDirectory();
       _config.outputFolderPath = dir.path;
+      await loadBatchHistory();
+    } catch (_) {}
+  }
+
+  Future<void> loadBatchHistory() async {
+    try {
+      _allBatchSessions = await FileService.loadBatchSessions(
+        customBaseDir: _config.outputFolderPath,
+      );
       notifyListeners();
     } catch (_) {}
+  }
+
+  /// Checks if there is a previously paused/unfinished batch that can be resumed
+  BatchSession? getLatestPausedBatch() {
+    for (var s in _allBatchSessions) {
+      if (!s.isCompleted && s.completedQueries < s.totalQueries) {
+        if (File(s.masterTxtPath).existsSync() && File(s.masterCsvPath).existsSync()) {
+          return s;
+        }
+      }
+    }
+    return null;
   }
 
   // Getters
@@ -79,6 +105,10 @@ class ScraperController extends ChangeNotifier {
   String? get masterTxtPath => _activeMasterBatch?.txtFile.path;
   String? get masterCsvPath => _activeMasterBatch?.csvFile.path;
   List<String> get savedFiles => List.unmodifiable(_savedFiles);
+
+  BatchSession? get currentBatchSession => _currentBatchSession;
+  List<BatchSession> get allBatchSessions => List.unmodifiable(_allBatchSessions);
+  Set<String> get completedQueryKeys => Set.unmodifiable(_completedQueryKeys);
 
   List<LogEntry> get logs => List.unmodifiable(_logs);
   List<EmailRecord> get allDiscoveredRecords => List.unmodifiable(_allDiscoveredRecords);
@@ -169,10 +199,8 @@ class ScraperController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Start the full automated extraction workflow:
-  /// Creates ONE master TXT and CSV for the session.
-  /// For City -> For each Contractor in same city -> Harvest all pages (300+ links) ->
-  /// Crawl all links -> Append to single master files -> Move to next contractor -> Move to next city!
+  /// Start a brand new extraction workflow:
+  /// Creates ONE fresh master TXT and CSV for the session and records a new BatchSession.
   Future<void> startScraping() async {
     if (_status == ScrapeStatus.running) return;
 
@@ -185,13 +213,15 @@ class ScraperController extends ChangeNotifier {
       return;
     }
     if (_task.contractorTypes.isEmpty) {
-      _log('Please provide at least one contractor type.', LogType.error);
+      _log('Please provide at least one contractor category.', LogType.error);
       return;
     }
 
     _status = ScrapeStatus.running;
+    _completedQueryKeys.clear();
     _completedQueriesCount = 0;
     _websitesVisitedTotal = 0;
+    _allDiscoveredRecords.clear();
     notifyListeners();
 
     // 1. Initialize Single Master Output Files for this started batch
@@ -205,15 +235,90 @@ class ScraperController extends ChangeNotifier {
       _savedFiles.add(_activeMasterBatch!.csvFile.path);
     }
 
-    _log('=== BATCH EXTRACTION PIPELINE INITIALIZED ===', LogType.info);
+    final batchId = 'batch_${DateTime.now().millisecondsSinceEpoch}';
+    _currentBatchSession = BatchSession(
+      id: batchId,
+      state: state,
+      cities: List.from(_task.activeCities),
+      contractors: List.from(_task.contractorTypes),
+      completedQueryKeys: [],
+      masterTxtPath: _activeMasterBatch!.txtFile.path,
+      masterCsvPath: _activeMasterBatch!.csvFile.path,
+      emailsCount: 0,
+      websitesVisited: 0,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+      isCompleted: false,
+    );
+    await FileService.saveBatchSession(_currentBatchSession!, customBaseDir: _config.outputFolderPath);
+    await loadBatchHistory();
+
+    _log('=== NEW BATCH EXTRACTION INITIALIZED ===', LogType.info);
     _log('State: $state | Cities: ${_task.activeCities.length} | Contractors: ${_task.contractorTypes.length}', LogType.info);
     _log('Total searches to execute: $totalQueriesInSession', LogType.info);
     _log('Target links per search: Minimum ${_config.minLinksTarget}+ unique websites across all search pages', LogType.info);
     _log('Master Output TXT: ${_activeMasterBatch!.txtFile.path}', LogType.success);
     _log('Master Output CSV: ${_activeMasterBatch!.csvFile.path}', LogType.success);
 
+    await _runExtractionLoop();
+  }
+
+  /// Resumes a previously paused/stopped batch without creating new files.
+  /// Pre-loads all existing emails from the master file and skips completed queries.
+  Future<void> resumeBatch(BatchSession session) async {
+    if (_status == ScrapeStatus.running) return;
+
+    final txtFile = File(session.masterTxtPath);
+    final csvFile = File(session.masterCsvPath);
+
+    if (!await txtFile.exists() || !await csvFile.exists()) {
+      _log('Cannot resume batch: output files were not found on disk (${session.masterTxtPath}).', LogType.error);
+      return;
+    }
+
+    _status = ScrapeStatus.running;
+    _currentBatchSession = session;
+    _task.manualState = session.state;
+    _task.activeCities = List.from(session.cities);
+    _task.contractorTypes = List.from(session.contractors);
+
+    _completedQueryKeys.clear();
+    _completedQueryKeys.addAll(session.completedQueryKeys);
+    _completedQueriesCount = _completedQueryKeys.length;
+    _websitesVisitedTotal = session.websitesVisited;
+
+    // Connect to the existing master files (pre-loads existing emails so no duplicates are written)
+    _activeMasterBatch = await FileService.resumeMasterBatchSession(
+      txtPath: session.masterTxtPath,
+      csvPath: session.masterCsvPath,
+    );
+
+    if (!_savedFiles.contains(session.masterTxtPath)) {
+      _savedFiles.add(session.masterTxtPath);
+      _savedFiles.add(session.masterCsvPath);
+    }
+
+    // Pre-load existing records into memory so Notepad & table view show previous emails
+    final existingRecords = await FileService.readExistingRecordsFromCsv(session.masterCsvPath);
+    _allDiscoveredRecords.clear();
+    _allDiscoveredRecords.addAll(existingRecords);
+
+    _log('=== RESUMING PREVIOUS BATCH ===', LogType.info);
+    _log('State: ${session.state} | Completed: ${session.completedQueries}/${session.totalQueries} searches', LogType.info);
+    _log('Emails already in file: $totalEmailsFound | Appending directly to existing files', LogType.success);
+    _log('Master TXT: ${session.masterTxtPath}', LogType.info);
+    _log('Master CSV: ${session.masterCsvPath}', LogType.info);
+
+    notifyListeners();
+
+    await _runExtractionLoop();
+  }
+
+  /// The core search and crawl loop executed by both new and resumed sessions
+  Future<void> _runExtractionLoop() async {
+    final state = _task.manualState.trim();
+
     try {
-      // Loop: City -> Contractor in same City -> All Pages -> Crawl -> Next Contractor -> Next City
       for (var city in _task.activeCities) {
         if (_status == ScrapeStatus.stopped) break;
 
@@ -228,6 +333,12 @@ class ScraperController extends ChangeNotifier {
           }
           if (_status == ScrapeStatus.stopped) break;
 
+          final queryKey = '$contractor|$city';
+          if (_completedQueryKeys.contains(queryKey)) {
+            // Skip already completed query from previous run!
+            continue;
+          }
+
           _currentContractor = contractor;
           _isHarvestingLinks = true;
           _currentSitesTotal = 0;
@@ -236,6 +347,16 @@ class ScraperController extends ChangeNotifier {
           notifyListeners();
 
           _log('Starting Deep Search: "$_activeHarvestQuery"', LogType.search);
+
+          // Update current batch session in progress
+          if (_currentBatchSession != null) {
+            _currentBatchSession = _currentBatchSession!.copyWith(
+              currentCity: city,
+              currentContractor: contractor,
+              updatedAt: DateTime.now(),
+            );
+            await FileService.saveBatchSession(_currentBatchSession!, customBaseDir: _config.outputFolderPath);
+          }
 
           // 2. Multi-page exhaustive search to extract ALL web links (at least 300+ links across pages 1 to N)
           final searchLinks = await SearchService.searchWebExhaustive(
@@ -310,12 +431,26 @@ class ScraperController extends ChangeNotifier {
             );
           }
 
-          _completedQueriesCount++;
+          // Mark query key as completed
+          _completedQueryKeys.add(queryKey);
+          _completedQueriesCount = _completedQueryKeys.length;
+
+          // Save batch session progress to disk
+          if (_currentBatchSession != null) {
+            _currentBatchSession = _currentBatchSession!.copyWith(
+              completedQueryKeys: _completedQueryKeys.toList(),
+              emailsCount: totalEmailsFound,
+              websitesVisited: _websitesVisitedTotal,
+              updatedAt: DateTime.now(),
+            );
+            await FileService.saveBatchSession(_currentBatchSession!, customBaseDir: _config.outputFolderPath);
+            await loadBatchHistory();
+          }
+
           notifyListeners();
 
           _log('Completed $contractor in $city ($searchLinks links visited, ${batchDiscoveredRecords.length} emails added to master file).', LogType.success);
           _log('Advancing to next contractor in the same city: $city...', LogType.info);
-          // Immediately moves to the NEXT contractor in the SAME city!
         }
 
         _log('All contractor searches completed for $city! Moving to next city...', LogType.success);
@@ -323,6 +458,18 @@ class ScraperController extends ChangeNotifier {
 
       if (_status != ScrapeStatus.stopped) {
         _status = ScrapeStatus.completed;
+        if (_currentBatchSession != null) {
+          _currentBatchSession = _currentBatchSession!.copyWith(
+            isCompleted: true,
+            completedQueryKeys: _completedQueryKeys.toList(),
+            emailsCount: totalEmailsFound,
+            websitesVisited: _websitesVisitedTotal,
+            updatedAt: DateTime.now(),
+          );
+          await FileService.saveBatchSession(_currentBatchSession!, customBaseDir: _config.outputFolderPath);
+          await loadBatchHistory();
+        }
+
         _log('=================================================================', LogType.success);
         _log('BATCH COMPLETED! All unique emails saved in: ${_activeMasterBatch?.txtFile.path}', LogType.success);
         _log('Website visit report saved in: ${_activeMasterBatch?.csvFile.path}', LogType.success);
@@ -340,7 +487,16 @@ class ScraperController extends ChangeNotifier {
   void pauseScraping() {
     if (_status == ScrapeStatus.running) {
       _status = ScrapeStatus.paused;
-      _log('Scraping paused.', LogType.warning);
+      _log('Scraping paused. Current progress saved to batch manifest.', LogType.warning);
+      if (_currentBatchSession != null) {
+        _currentBatchSession = _currentBatchSession!.copyWith(
+          completedQueryKeys: _completedQueryKeys.toList(),
+          emailsCount: totalEmailsFound,
+          websitesVisited: _websitesVisitedTotal,
+          updatedAt: DateTime.now(),
+        );
+        FileService.saveBatchSession(_currentBatchSession!, customBaseDir: _config.outputFolderPath);
+      }
       notifyListeners();
     }
   }
@@ -355,7 +511,16 @@ class ScraperController extends ChangeNotifier {
 
   void stopScraping() {
     _status = ScrapeStatus.stopped;
-    _log('Scraping stopped.', LogType.warning);
+    _log('Scraping stopped. All progress saved to batch manifest.', LogType.warning);
+    if (_currentBatchSession != null) {
+      _currentBatchSession = _currentBatchSession!.copyWith(
+        completedQueryKeys: _completedQueryKeys.toList(),
+        emailsCount: totalEmailsFound,
+        websitesVisited: _websitesVisitedTotal,
+        updatedAt: DateTime.now(),
+      );
+      FileService.saveBatchSession(_currentBatchSession!, customBaseDir: _config.outputFolderPath);
+    }
     notifyListeners();
   }
 }

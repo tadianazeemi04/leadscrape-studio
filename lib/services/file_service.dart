@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:csv/csv.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../models/batch_session.dart';
 import '../models/email_record.dart';
 
 class MasterBatchFiles {
@@ -72,6 +74,127 @@ class FileService {
       csvFile: csvFile,
       recordedEmails: {},
     );
+  }
+
+  /// Connects to an existing Master Batch File pair (TXT & CSV) for resuming a paused session.
+  /// Pre-loads all existing emails from the TXT file so duplicates are never added.
+  static Future<MasterBatchFiles> resumeMasterBatchSession({
+    required String txtPath,
+    required String csvPath,
+  }) async {
+    final txtFile = File(txtPath);
+    final csvFile = File(csvPath);
+
+    final Set<String> existingEmails = {};
+
+    if (await txtFile.exists()) {
+      final lines = await txtFile.readAsLines();
+      for (var line in lines) {
+        final email = line.trim().toLowerCase();
+        if (email.isNotEmpty) {
+          existingEmails.add(email);
+        }
+      }
+    }
+
+    return MasterBatchFiles(
+      txtFile: txtFile,
+      csvFile: csvFile,
+      recordedEmails: existingEmails,
+    );
+  }
+
+  /// Reads existing EmailRecords from an existing master CSV file
+  static Future<List<EmailRecord>> readExistingRecordsFromCsv(String csvPath) async {
+    final file = File(csvPath);
+    if (!await file.exists()) return [];
+
+    try {
+      final content = await file.readAsString();
+      final rows = const CsvToListConverter().convert(content);
+      if (rows.length <= 1) return []; // Only header or empty
+
+      final List<EmailRecord> records = [];
+      // Row 0 is header: ['Email', 'Contractor Type', 'City', 'State', 'Website URL', 'Facebook URL', 'Source', 'Date Discovered']
+      for (int i = 1; i < rows.length; i++) {
+        final row = rows[i];
+        if (row.isEmpty) continue;
+        final email = row.isNotEmpty ? row[0].toString().trim() : '';
+        if (email.isEmpty) continue;
+        final contractor = row.length > 1 ? row[1].toString().trim() : '';
+        final city = row.length > 2 ? row[2].toString().trim() : '';
+        final state = row.length > 3 ? row[3].toString().trim() : '';
+        final websiteUrl = row.length > 4 ? row[4].toString().trim() : '';
+        final facebookUrl = row.length > 5 ? row[5].toString().trim() : null;
+        final source = row.length > 6 ? row[6].toString().trim() : 'Website';
+
+        records.add(EmailRecord(
+          email: email,
+          contractorType: contractor,
+          city: city,
+          state: state,
+          websiteUrl: websiteUrl,
+          facebookUrl: (facebookUrl != null && facebookUrl.isNotEmpty) ? facebookUrl : null,
+          source: source,
+        ));
+      }
+      return records;
+    } catch (e) {
+      debugPrint('Error reading CSV records: $e');
+      return [];
+    }
+  }
+
+  /// Manifest file storing all previous batch session histories
+  static Future<File> getBatchManifestFile({String? customBaseDir}) async {
+    final baseDir = customBaseDir != null && customBaseDir.isNotEmpty
+        ? Directory(customBaseDir)
+        : await getDefaultOutputDirectory();
+    final file = File(p.join(baseDir.path, 'webreven_batches.json'));
+    if (!await file.exists()) {
+      await file.create(recursive: true);
+      await file.writeAsString('[]');
+    }
+    return file;
+  }
+
+  /// Loads all saved batch sessions
+  static Future<List<BatchSession>> loadBatchSessions({String? customBaseDir}) async {
+    try {
+      final file = await getBatchManifestFile(customBaseDir: customBaseDir);
+      final content = await file.readAsString();
+      if (content.trim().isEmpty) return [];
+      final list = jsonDecode(content) as List<dynamic>;
+      final sessions = list
+          .map((e) => BatchSession.fromJson(e as Map<String, dynamic>))
+          .toList();
+      // Sort by updatedAt descending
+      sessions.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      return sessions;
+    } catch (e) {
+      debugPrint('Error loading batch sessions: $e');
+      return [];
+    }
+  }
+
+  /// Saves or updates a batch session in the manifest
+  static Future<void> saveBatchSession(BatchSession session, {String? customBaseDir}) async {
+    try {
+      final file = await getBatchManifestFile(customBaseDir: customBaseDir);
+      final sessions = await loadBatchSessions(customBaseDir: customBaseDir);
+      final index = sessions.indexWhere((s) => s.id == session.id);
+      if (index >= 0) {
+        sessions[index] = session;
+      } else {
+        sessions.insert(0, session);
+      }
+      final jsonStr = const JsonEncoder.withIndent('  ').convert(
+        sessions.map((s) => s.toJson()).toList(),
+      );
+      await file.writeAsString(jsonStr);
+    } catch (e) {
+      debugPrint('Error saving batch session: $e');
+    }
   }
 
   /// Appends newly discovered records in real-time to the single master batch files

@@ -18,5 +18,8 @@ void main() {
     expect(find.text('WebReven'), findsOneWidget);
     expect(find.text('START SCRAPING'), findsOneWidget);
     expect(find.text('Notepad View (0)'), findsOneWidget);
+    expect(find.text('Cities (5)'), findsOneWidget);
+    expect(find.text('Contractors (5)'), findsOneWidget);
+    expect(find.text('Batch History (0)'), findsOneWidget);
   });
 }

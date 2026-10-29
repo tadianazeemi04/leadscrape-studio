@@ -24,7 +24,7 @@ class WebRevenApp extends StatelessWidget {
           theme: ThemeData(
             useMaterial3: true,
             colorScheme: ColorScheme.fromSeed(
-              seedColor: const Color(0xFF0D9488), // Emerald Teal
+              seedColor: const Color(0xFF10B981), // Emerald Green
               brightness: Brightness.light,
             ),
             appBarTheme: const AppBarTheme(
@@ -35,16 +35,16 @@ class WebRevenApp extends StatelessWidget {
           darkTheme: ThemeData(
             useMaterial3: true,
             colorScheme: ColorScheme.fromSeed(
-              seedColor: const Color(0xFF14B8A6),
+              seedColor: const Color(0xFF00E676), // Cyber Neon Green
               brightness: Brightness.dark,
-              surface: const Color(0xFF121417),
-              surfaceContainerHighest: const Color(0xFF1E2228),
+              surface: const Color(0xFF101413),
+              surfaceContainerHighest: const Color(0xFF18221D),
             ),
-            scaffoldBackgroundColor: const Color(0xFF0F1115),
+            scaffoldBackgroundColor: const Color(0xFF0B0F0D),
             appBarTheme: const AppBarTheme(
               elevation: 0,
               scrolledUnderElevation: 0,
-              backgroundColor: Color(0xFF121417),
+              backgroundColor: Color(0xFF101413),
             ),
           ),
           home: const DashboardScreen(),
