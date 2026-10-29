@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "LeadScrape" "\0"
-            VALUE "FileDescription", "LeadScrape Studio - Desktop Email Harvester" "\0"
+            VALUE "CompanyName", "WebReven" "\0"
+            VALUE "FileDescription", "WebReven - Lead & Email Harvester" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "LeadScrapeStudio" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 LeadScrape. All rights reserved." "\0"
-            VALUE "OriginalFilename", "LeadScrapeStudio.exe" "\0"
-            VALUE "ProductName", "LeadScrape Studio" "\0"
+            VALUE "InternalName", "WebReven" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 WebReven. All rights reserved." "\0"
+            VALUE "OriginalFilename", "WebReven.exe" "\0"
+            VALUE "ProductName", "WebReven" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

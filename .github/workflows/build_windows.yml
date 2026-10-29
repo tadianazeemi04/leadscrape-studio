@@ -38,7 +38,7 @@ jobs:
         shell: pwsh
         run: |
           $releasePath = "build\windows\x64\runner\Release"
-          Compress-Archive -Path "$releasePath\*" -DestinationPath "LeadScrapeStudio_Portable.zip"
+          Compress-Archive -Path "$releasePath\*" -DestinationPath "WebReven_Portable.zip"
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
@@ -51,13 +51,13 @@ jobs:
       - name: Upload Single-File Client Installer (Setup.exe)
         uses: actions/upload-artifact@v4
         with:
-          name: LeadScrapeStudio_Setup_Installer
-          path: dist/LeadScrapeStudio_Setup.exe
+          name: WebReven_Setup_Installer
+          path: dist/WebReven_Setup.exe
           retention-days: 30
 
       - name: Upload Portable Client ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: LeadScrapeStudio_Portable_ZIP
-          path: LeadScrapeStudio_Portable.zip
+          name: WebReven_Portable_ZIP
+          path: WebReven_Portable.zip
           retention-days: 30

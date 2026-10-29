@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../state/scraper_controller.dart';
 import '../../services/file_service.dart';
+import 'confirmation_dialog.dart';
 
 class ConfigPanel extends StatefulWidget {
   final ScraperController controller;
@@ -160,6 +161,111 @@ class _ConfigPanelState extends State<ConfigPanel> {
     }
   }
 
+  Future<void> _handleStartScraping() async {
+    final c = widget.controller;
+    if (c.activeCities.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please add at least one city first.')),
+      );
+      return;
+    }
+    if (c.contractorTypes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please add at least one contractor category first.')),
+      );
+      return;
+    }
+
+    final totalQueries = c.activeCities.length * c.contractorTypes.length;
+    final confirmed = await confirmAction(
+      context,
+      title: 'Start WebReven Harvester?',
+      message:
+          'State: ${c.manualState.isEmpty ? "All" : c.manualState}\n'
+          'Active Cities: ${c.activeCities.length}\n'
+          'Contractor Categories: ${c.contractorTypes.length}\n'
+          'Total Searches: $totalQueries\n'
+          'Target: ${c.config.minLinksTarget}+ links per query\n\n'
+          'WebReven will traverse pages 1 through N, extract all emails, and stream them in real-time into a single master TXT and CSV file.\n\n'
+          'Are you ready to proceed?',
+      confirmLabel: 'Start Scraping',
+      confirmColor: const Color(0xFF0D9488),
+      icon: Icons.rocket_launch_rounded,
+      iconColor: const Color(0xFF0D9488),
+    );
+
+    if (confirmed) {
+      c.startScraping();
+    }
+  }
+
+  Future<void> _handleStopScraping() async {
+    final confirmed = await confirmAction(
+      context,
+      title: 'Stop Scraping Session?',
+      message:
+          'Are you sure you want to stop the automated scraper?\n\n'
+          'Discovered links and emails up to this point are already safely saved on disk in your master batch files.',
+      confirmLabel: 'Stop Scraping',
+      confirmColor: Colors.red.shade700,
+      icon: Icons.stop_circle_outlined,
+      iconColor: Colors.red,
+    );
+
+    if (confirmed) {
+      widget.controller.stopScraping();
+    }
+  }
+
+  Future<void> _handlePauseScraping() async {
+    final confirmed = await confirmAction(
+      context,
+      title: 'Pause Harvesting?',
+      message:
+          'Scraping will pause after active web crawlers finish.\n\nYou can resume scraping at any time without losing progress.',
+      confirmLabel: 'Pause',
+      confirmColor: Colors.amber.shade800,
+      icon: Icons.pause_circle_outline,
+      iconColor: Colors.amber,
+    );
+
+    if (confirmed) {
+      widget.controller.pauseScraping();
+    }
+  }
+
+  Future<void> _confirmRemoveCity(String city) async {
+    final confirmed = await confirmAction(
+      context,
+      title: 'Remove City?',
+      message: 'Are you sure you want to remove "$city" from the queue?',
+      confirmLabel: 'Remove City',
+      confirmColor: Colors.red.shade700,
+      icon: Icons.delete_outline,
+      iconColor: Colors.red,
+    );
+
+    if (confirmed) {
+      widget.controller.removeCity(city);
+    }
+  }
+
+  Future<void> _confirmRemoveContractor(String type) async {
+    final confirmed = await confirmAction(
+      context,
+      title: 'Remove Contractor Category?',
+      message: 'Are you sure you want to remove "$type" from the search list?',
+      confirmLabel: 'Remove Category',
+      confirmColor: Colors.red.shade700,
+      icon: Icons.delete_outline,
+      iconColor: Colors.red,
+    );
+
+    if (confirmed) {
+      widget.controller.removeContractor(type);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
@@ -291,7 +397,7 @@ class _ConfigPanelState extends State<ConfigPanel> {
                           return Chip(
                             label: Text(city, style: const TextStyle(fontSize: 11)),
                             deleteIcon: const Icon(Icons.close, size: 12),
-                            onDeleted: isRunning ? null : () => c.removeCity(city),
+                            onDeleted: isRunning ? null : () => _confirmRemoveCity(city),
                             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             padding: const EdgeInsets.symmetric(horizontal: 4),
                           );
@@ -356,7 +462,7 @@ class _ConfigPanelState extends State<ConfigPanel> {
                       return Chip(
                         label: Text(type, style: const TextStyle(fontSize: 11)),
                         deleteIcon: const Icon(Icons.close, size: 12),
-                        onDeleted: isRunning ? null : () => c.removeContractor(type),
+                        onDeleted: isRunning ? null : () => _confirmRemoveContractor(type),
                         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         padding: const EdgeInsets.symmetric(horizontal: 4),
                       );
@@ -432,7 +538,7 @@ class _ConfigPanelState extends State<ConfigPanel> {
                   const Text('5. Master Output Folder', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                   const SizedBox(height: 6),
                   Text(
-                    c.config.outputFolderPath ?? 'Default: Documents/LeadScrape_Outputs',
+                    c.config.outputFolderPath ?? 'Default: Documents/WebReven_Outputs',
                     style: TextStyle(
                       fontSize: 11,
                       color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
@@ -479,7 +585,7 @@ class _ConfigPanelState extends State<ConfigPanel> {
                       width: double.infinity,
                       height: 44,
                       child: FilledButton.icon(
-                        onPressed: c.startScraping,
+                        onPressed: _handleStartScraping,
                         icon: const Icon(Icons.play_arrow),
                         label: const Text('START SCRAPING', style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
@@ -489,7 +595,7 @@ class _ConfigPanelState extends State<ConfigPanel> {
                       children: [
                         Expanded(
                           child: OutlinedButton.icon(
-                            onPressed: c.pauseScraping,
+                            onPressed: _handlePauseScraping,
                             icon: const Icon(Icons.pause),
                             label: const Text('Pause'),
                           ),
@@ -498,7 +604,7 @@ class _ConfigPanelState extends State<ConfigPanel> {
                         Expanded(
                           child: FilledButton.icon(
                             style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
-                            onPressed: c.stopScraping,
+                            onPressed: _handleStopScraping,
                             icon: const Icon(Icons.stop),
                             label: const Text('Stop'),
                           ),
@@ -520,7 +626,7 @@ class _ConfigPanelState extends State<ConfigPanel> {
                         Expanded(
                           child: OutlinedButton.icon(
                             style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                            onPressed: c.stopScraping,
+                            onPressed: _handleStopScraping,
                             icon: const Icon(Icons.stop),
                             label: const Text('Stop'),
                           ),

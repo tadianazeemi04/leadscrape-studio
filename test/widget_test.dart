@@ -11,11 +11,11 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     // Build app
-    await tester.pumpWidget(const LeadScrapeApp());
+    await tester.pumpWidget(const WebRevenApp());
     await tester.pumpAndSettle();
 
     // Verify main components render properly
-    expect(find.text('LeadScrape Studio'), findsOneWidget);
+    expect(find.text('WebReven'), findsOneWidget);
     expect(find.text('START SCRAPING'), findsOneWidget);
     expect(find.text('Notepad View (0)'), findsOneWidget);
   });

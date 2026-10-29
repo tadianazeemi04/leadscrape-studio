@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../models/email_record.dart';
 import '../../services/file_service.dart';
 import '../../state/scraper_controller.dart';
+import 'confirmation_dialog.dart';
 
 class ResultsTable extends StatefulWidget {
   final ScraperController controller;
@@ -133,28 +134,6 @@ class _ResultsTableState extends State<ResultsTable> with SingleTickerProviderSt
                     ],
                   ),
                 ),
-
-                // Master Output Buttons
-                if (c.masterTxtPath != null)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8.0),
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
-                      onPressed: () => FileService.openFile(c.masterTxtPath!),
-                      icon: const Icon(Icons.description, size: 14),
-                      label: const Text('Open Batch TXT', style: TextStyle(fontSize: 11)),
-                    ),
-                  ),
-                if (c.masterCsvPath != null)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8.0),
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
-                      onPressed: () => FileService.openFile(c.masterCsvPath!),
-                      icon: const Icon(Icons.table_view, size: 14),
-                      label: const Text('Open Batch CSV', style: TextStyle(fontSize: 11)),
-                    ),
-                  ),
 
                 FilledButton.icon(
                   style: FilledButton.styleFrom(
@@ -338,7 +317,20 @@ class _ResultsTableState extends State<ResultsTable> with SingleTickerProviderSt
                             : IconButton(
                                 tooltip: 'Remove $city',
                                 icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                                onPressed: () => c.removeCity(city),
+                                onPressed: () async {
+                                  final confirm = await confirmAction(
+                                    context,
+                                    title: 'Remove City?',
+                                    message: 'Are you sure you want to remove "$city" from the search queue?',
+                                    confirmLabel: 'Remove City',
+                                    confirmColor: Colors.red.shade700,
+                                    icon: Icons.delete_outline,
+                                    iconColor: Colors.red,
+                                  );
+                                  if (confirm) {
+                                    c.removeCity(city);
+                                  }
+                                },
                               ),
                       );
                     },

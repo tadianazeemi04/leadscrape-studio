@@ -19,10 +19,10 @@ class MasterBatchFiles {
 }
 
 class FileService {
-  /// Gets the default directory for saving output files: Documents/LeadScrape_Outputs/
+  /// Gets the default directory for saving output files: Documents/WebReven_Outputs/
   static Future<Directory> getDefaultOutputDirectory() async {
     final docsDir = await getApplicationDocumentsDirectory();
-    final outDir = Directory(p.join(docsDir.path, 'LeadScrape_Outputs'));
+    final outDir = Directory(p.join(docsDir.path, 'WebReven_Outputs'));
     if (!await outDir.exists()) {
       await outDir.create(recursive: true);
     }

@@ -1,13 +1,13 @@
-; Inno Setup Script for LeadScrape Studio
+; Inno Setup Script for WebReven
 [Setup]
 AppId={{C8E67468-9A2E-47F1-8B35-B18B63F3398D}
-AppName=LeadScrape Studio
-AppVersion=1.0.0
-AppPublisher=LeadScrape
-DefaultDirName={autopf}\LeadScrape Studio
-DefaultGroupName=LeadScrape Studio
+AppName=WebReven
+AppVersion=2.0.0
+AppPublisher=WebReven
+DefaultDirName={autopf}\WebReven
+DefaultGroupName=WebReven
 OutputDir=dist
-OutputBaseFilename=LeadScrapeStudio_Setup
+OutputBaseFilename=WebReven_Setup
 Compression=lzma2/max
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64
@@ -24,9 +24,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\LeadScrape Studio"; Filename: "{app}\LeadScrapeStudio.exe"
-Name: "{group}\{cm:UninstallProgram,LeadScrape Studio}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\LeadScrape Studio"; Filename: "{app}\LeadScrapeStudio.exe"; Tasks: desktopicon
+Name: "{group}\WebReven"; Filename: "{app}\WebReven.exe"
+Name: "{group}\{cm:UninstallProgram,WebReven}"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\WebReven"; Filename: "{app}\WebReven.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\LeadScrapeStudio.exe"; Description: "{cm:LaunchProgram,LeadScrape Studio}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\WebReven.exe"; Description: "{cm:LaunchProgram,WebReven}"; Flags: nowait postinstall skipifsilent
