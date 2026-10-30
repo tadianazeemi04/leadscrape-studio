@@ -7,6 +7,11 @@ class MainFlutterWindow: NSWindow {
     let windowFrame = self.frame
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
+    self.title = "WebReven - Lead & Email Harvester"
+
+    if let icon = NSImage(named: "AppIcon") {
+      NSApplication.shared.applicationIconImage = icon
+    }
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
